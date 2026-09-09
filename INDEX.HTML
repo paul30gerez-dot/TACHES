@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>Tâches</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<style>
+  :root {
+    --brand: #006666;        /* Blue Stone — couleur de marque Pennylane */
+    --brand-dark: #004d4d;   /* variante foncée (survol) */
+    --brand-light: #2E8383;  /* Paradiso — variante claire */
+    --brand-tint: #E6F2F2;   /* fond teinté clair */
+    --accent-green: #00F872; /* Spring Green */
+    --accent-coral: #FFA37B; /* Hit Pink */
+    --accent-yellow: #F3C628;/* Saffron */
+    --muted-teal: #74A2A2;   /* Sea Nymph */
+    --ink: #1B1D1C;          /* Heavy Metal */
+  }
+  body { margin: 0; font-family: 'Manrope', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  .task-drag-handle { touch-action: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  const STORAGE_PREFIX = "taches-app:";
+  const storage = {
+    async get(key) {
+      const v = localStorage.getItem(STORAGE_PREFIX + key);
+      return v !== null ? { value: v } : null;
+    },
+    async set(key, value) {
+      localStorage.setItem(STORAGE_PREFIX + key, value);
+      return { value };
+    },
+  };
+</script>
+
+<script type="text/plain" id="app-source">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+// ---------- Icônes ----------
+function IconBase({ size = 18, className = "", children }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      {children}
+    </svg>
+  );
+}
+const Plus = (p) => <IconBase {...p}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></IconBase>;
+const X = (p) => <IconBase {...p}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></IconBase>;
+const Check = (p) => <IconBase {...p}><polyline points="20 6 9 17 4 12" /></IconBase>;
+const MessageSquare = (p) => <IconBase {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></IconBase>;
+const Archive = (p) => <IconBase {...p}><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><line x1="10" y1="12" x2="14" y2="12" /></IconBase>;
+const AlertCircle = (p) => <IconBase {...p}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></IconBase>;
+const Loader2 = (p) => <IconBase {...p}><path d="M21 12a9 9 0 1 1-6.219-8.56" /></IconBase>;
+const GripVertical = (p) => (
+  <IconBase {...p}>
+    <circle cx="9" cy="5" r="1" fill="currentColor" /><circle cx="9" cy="12" r="1" fill="currentColor" /><circle cx="9" cy="19" r="1" fill="currentColor" />
+    <circle cx="15" cy="5" r="1" fill="currentColor" /><circle cx="15" cy="12" r="1" fill="currentColor" /><circle cx="15" cy="19" r="1" fill="currentColor" />
+  </IconBase>
+);
+
+// ---------- Constantes ----------
+const MOIS_NOMS = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+const QUARTERLY_DEADLINE_MONTHS = [4, 7, 10, 1];
+const GENERIC_ECHEANCES = [
+  { month: 1, day: 15, label: "TVS — avec la TVA de janvier" },
+  { month: 1, day: 15, label: "Liasse fiscale — clôtures 30/09" },
+  { month: 2, day: 15, label: "IFU — dividendes versés" },
+  { month: 3, day: 15, label: "1er acompte IS" },
+  { month: 3, day: 31, label: "AGO — clôtures 30/09" },
+  { month: 5, day: 5, label: "TVA CA12 — régularisation (régime simplifié)" },
+  { month: 5, day: 15, label: "Liasse fiscale — clôtures 31/12" },
+  { month: 6, day: 15, label: "Acompte CFE" },
+  { month: 6, day: 15, label: "2e acompte IS" },
+  { month: 6, day: 30, label: "AGO — clôtures 31/12" },
+  { month: 7, day: 15, label: "Liasse fiscale — clôtures 31/03" },
+  { month: 9, day: 15, label: "3e acompte IS" },
+  { month: 9, day: 30, label: "AGO — clôtures 31/03" },
+  { month: 10, day: 15, label: "Liasse fiscale — clôtures 30/06" },
+  { month: 12, day: 15, label: "Solde CFE" },
+  { month: 12, day: 15, label: "4e acompte IS" },
+  { month: 12, day: 31, label: "AGO — clôtures 30/06" },
+];
+
+const IMPORTANCES = ["Faible", "Moyenne", "Élevée"];
+const IMPORTANCE_STYLE = {
+  "Faible": { badge: "bg-[var(--brand-tint)] text-[var(--muted-teal)] border-[var(--muted-teal)]", dot: "bg-[var(--muted-teal)]" },
+  "Moyenne": { badge: "bg-[#FCF1CE] text-[#8A6D0B] border-[var(--accent-yellow)]", dot: "bg-[var(--accent-yellow)]" },
+  "Élevée": { badge: "bg-[#FFEDE2] text-[#B85A2E] border-[var(--accent-coral)]", dot: "bg-[var(--accent-coral)]" },
+};
+
+const STORAGE_KEYS = { taches: "taches" };
+
+// ---------- Utilitaires ----------
+function uid() { return Math.random().toString(36).slice(2, 10); }
+function fmtDate(d) {
+  if (!d) return "—";
+  const date = new Date(d);
+  if (isNaN(date)) return "—";
+  return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+function fmtDateTimeLong(d) {
+  const date = new Date(d);
+  return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function todayStart() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function daysUntil(d) {
+  const target = new Date(d); target.setHours(0, 0, 0, 0);
+  return Math.round((target - todayStart()) / 86400000);
+}
+function urgency(d) {
+  const diff = daysUntil(d);
+  if (diff < 0) return "overdue";
+  if (diff === 0) return "today";
+  if (diff <= 7) return "soon";
+  return "later";
+}
+const URGENCY_DOT = { overdue: "bg-red-500", today: "bg-red-500", soon: "bg-[var(--accent-yellow)]", later: "bg-slate-300" };
+
+const inputCls = "w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[var(--brand)] focus:border-[var(--brand)]";
+const primaryBtn = "bg-[var(--brand)] hover:bg-[var(--brand-dark)] text-white";
+
+function UrgencyDot({ date }) { return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${URGENCY_DOT[urgency(date)]}`} />; }
+function Badge({ children, className = "" }) { return <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${className}`}>{children}</span>; }
+
+function EmptyState({ icon: Icon, title, subtitle }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-14 px-4 text-slate-400">
+      <Icon size={30} className="mb-3 opacity-60" />
+      <p className="text-sm font-medium text-slate-500">{title}</p>
+      {subtitle && <p className="text-xs mt-1 max-w-xs">{subtitle}</p>}
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-0 sm:p-4">
+      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto shadow-xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 sticky top-0 bg-white z-10">
+          <h3 className="font-semibold text-slate-800">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1"><X size={18} /></button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+function Field({ label, children }) {
+  return (
+    <label className="block mb-3">
+      <span className="block text-xs font-medium text-slate-500 mb-1">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function GenericEcheancesStrip() {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const activityMonth = MOIS_NOMS[(now.getMonth() + 11) % 12].toLowerCase();
+  const monthlyTva = [19, 21, 24].map((day) => ({ day, label: `TVA mensuelle (j.${day})` }));
+  const quarterlyTva = QUARTERLY_DEADLINE_MONTHS.includes(month) ? [19, 21, 24].map((day) => ({ day, label: `TVA trimestrielle (j.${day})` })) : [];
+  const annual = GENERIC_ECHEANCES.filter((e) => e.month === month).map((e) => ({ day: e.day, label: e.label }));
+  const all = [...monthlyTva, ...quarterlyTva, ...annual];
+  const byDay = new Map();
+  all.forEach((e) => { if (!byDay.has(e.day)) byDay.set(e.day, []); byDay.get(e.day).push(e.label); });
+  const days = Array.from(byDay.keys()).sort((a, b) => a - b);
+
+  return (
+    <div className="mb-6">
+      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-0.5">Échéances du mois — {MOIS_NOMS[now.getMonth()]}</p>
+      <p className="text-[10px] text-slate-400 mb-4">TVA mensuelle : activité de {activityMonth}. Repères généraux, indépendants de vos dossiers.</p>
+      {days.length === 0 ? (
+        <p className="text-xs text-slate-400">Aucune échéance générique ce mois-ci.</p>
+      ) : (
+        <div className="relative flex" style={{ minHeight: 92 }}>
+          <div className="absolute left-0 right-0 top-[26px] h-px bg-slate-300" />
+          {days.map((day) => (
+            <div key={day} className="relative flex-1 flex flex-col items-center px-0.5">
+              <span className="text-[11px] font-semibold text-slate-700">{day}</span>
+              <span className="w-2 h-2 rounded-full bg-[var(--brand)] ring-2 ring-white mt-1" />
+              <div className="mt-1.5 text-center">
+                {byDay.get(day).map((label, j) => <p key={j} className="text-[10px] text-slate-500 leading-tight">{label}</p>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Glisser-déposer tactile + souris (compatible mobile) ----------
+function useDragReorder(items, onReorder) {
+  const [draggingId, setDraggingId] = useState(null);
+  const stateRef = useRef({ id: null, itemsSnapshot: [] });
+
+  const onPointerMove = useCallback((e) => {
+    const { id } = stateRef.current;
+    if (!id) return;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const nodes = Array.from(document.querySelectorAll("[data-task-item]"));
+    let overId = null;
+    for (const node of nodes) {
+      const rect = node.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) { overId = node.getAttribute("data-task-item"); break; }
+    }
+    if (overId && overId !== id) {
+      const current = stateRef.current.itemsSnapshot;
+      const fromIdx = current.findIndex((t) => t.id === id);
+      const toIdx = current.findIndex((t) => t.id === overId);
+      if (fromIdx === -1 || toIdx === -1) return;
+      const next = current.slice();
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      stateRef.current.itemsSnapshot = next;
+      onReorder(next);
+    }
+  }, [onReorder]);
+
+  const onPointerUp = useCallback(() => {
+    setDraggingId(null);
+    stateRef.current.id = null;
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", onPointerUp);
+  }, [onPointerMove]);
+
+  function onPointerDown(e, id) {
+    e.preventDefault();
+    setDraggingId(id);
+    stateRef.current = { id, itemsSnapshot: items.slice() };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+  }
+
+  return { draggingId, onPointerDown };
+}
+
+// ---------- Application ----------
+function App() {
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [taches, setTaches] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+  const [openComments, setOpenComments] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await storage.get(STORAGE_KEYS.taches);
+        const t = r?.value ? JSON.parse(r.value) : [];
+        const cutoff = Date.now() - 30 * 86400000;
+        const purged = t.filter((tk) => !(tk.fait && tk.dateCompletion && new Date(tk.dateCompletion).getTime() < cutoff))
+          .map((tk) => ({ importance: "Moyenne", commentaires: [], ...tk }));
+        setTaches(purged);
+      } catch { setLoadError(true); }
+      finally { setLoaded(true); }
+    })();
+  }, []);
+
+  useEffect(() => { if (loaded) storage.set(STORAGE_KEYS.taches, JSON.stringify(taches)); }, [taches, loaded]);
+
+  const actives = useMemo(() => taches.filter((t) => !t.fait).sort((a, b) => a.ordre - b.ordre), [taches]);
+  const done = useMemo(() => taches.filter((t) => t.fait).sort((a, b) => new Date(b.dateCompletion) - new Date(a.dateCompletion)), [taches]);
+  const enRetard = actives.filter((t) => urgency(t.deadline) === "overdue").length;
+
+  function addTask({ titre, deadline, importance, commentaire }) {
+    const maxOrdre = taches.reduce((m, t) => Math.max(m, t.ordre || 0), 0);
+    const commentaires = commentaire.trim() ? [{ id: uid(), texte: commentaire.trim(), date: new Date().toISOString() }] : [];
+    setTaches([...taches, { id: uid(), titre, deadline, importance, fait: false, dateCompletion: null, commentaires, ordre: maxOrdre + 1 }]);
+    setShowAdd(false);
+  }
+  function toggleFait(id) {
+    setTaches(taches.map((t) => (t.id === id ? { ...t, fait: !t.fait, dateCompletion: !t.fait ? new Date().toISOString() : null } : t)));
+  }
+  function removeDone(id) { setTaches(taches.filter((t) => t.id !== id)); }
+  function cycleImportance(id) {
+    setTaches(taches.map((t) => {
+      if (t.id !== id) return t;
+      const idx = IMPORTANCES.indexOf(t.importance);
+      return { ...t, importance: IMPORTANCES[(idx + 1) % IMPORTANCES.length] };
+    }));
+  }
+  function addComment(id, texte) {
+    if (!texte.trim()) return;
+    setTaches(taches.map((t) => (t.id === id ? { ...t, commentaires: [{ id: uid(), texte: texte.trim(), date: new Date().toISOString() }, ...(t.commentaires || [])] } : t)));
+  }
+  function removeComment(taskId, commentId) {
+    setTaches(taches.map((t) => (t.id === taskId ? { ...t, commentaires: (t.commentaires || []).filter((c) => c.id !== commentId) } : t)));
+  }
+
+  function reorderActives(newActiveOrder) {
+    const orderMap = new Map(newActiveOrder.map((t, i) => [t.id, i]));
+    setTaches((prev) => prev.map((t) => (orderMap.has(t.id) ? { ...t, ordre: orderMap.get(t.id) } : t)));
+  }
+  const { draggingId, onPointerDown } = useDragReorder(actives, reorderActives);
+
+  if (!loaded) {
+    return <div className="flex items-center justify-center h-[400px] text-slate-400"><Loader2 className="animate-spin mr-2" size={18} /> Chargement…</div>;
+  }
+
+  return (
+    <div className="w-full bg-slate-50 text-slate-800 min-h-screen">
+      <div className="max-w-2xl mx-auto p-4 sm:p-8">
+        <h1 className="text-xl font-semibold text-slate-800 mb-1">Tâches</h1>
+        <p className="text-sm text-slate-500 mb-5">Vos tâches ponctuelles, avec repères fiscaux du mois.</p>
+
+        {loadError && (
+          <div className="mb-4 flex items-center gap-2 text-sm bg-red-50 text-red-700 border border-red-200 rounded-lg px-3 py-2">
+            <AlertCircle size={16} /> Certaines données n'ont pas pu être chargées.
+          </div>
+        )}
+
+        <GenericEcheancesStrip />
+
+        <div className="flex items-center gap-2 mb-6">
+          <span className={`w-2 h-2 rounded-full ${enRetard > 0 ? "bg-red-500" : "bg-slate-300"}`} />
+          <span className="text-xs text-slate-600"><b className="text-slate-800">{enRetard}</b> tâche{enRetard !== 1 ? "s" : ""} en retard</span>
+        </div>
+
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-medium text-slate-700 text-sm">Mes tâches</h2>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowDone(true)} className="text-xs flex items-center gap-1 text-slate-500 hover:text-slate-700 px-2 py-1"><Archive size={14} /> Terminées ({done.length})</button>
+            <button onClick={() => setShowAdd(true)} className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded-lg font-medium ${primaryBtn}`}><Plus size={14} /> Ajouter</button>
+          </div>
+        </div>
+
+        {actives.length === 0 ? (
+          <EmptyState icon={Check} title="Aucune tâche en cours" subtitle="Ajoutez votre première tâche pour commencer." />
+        ) : (
+          <ul className="space-y-2">
+            {actives.map((t) => {
+              const style = IMPORTANCE_STYLE[t.importance] || IMPORTANCE_STYLE["Moyenne"];
+              const isDragging = draggingId === t.id;
+              return (
+                <li key={t.id} data-task-item={t.id}
+                  className={`bg-white border rounded-xl px-3 py-3 flex items-start gap-2 transition-shadow ${isDragging ? "border-[var(--brand-light)] shadow-lg opacity-90" : "border-slate-200"}`}>
+                  <button onPointerDown={(e) => onPointerDown(e, t.id)}
+                    className="task-drag-handle mt-0.5 text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing shrink-0 px-0.5">
+                    <GripVertical size={16} />
+                  </button>
+                  <button onClick={() => toggleFait(t.id)} className="mt-0.5 w-5 h-5 rounded-full border-2 border-slate-300 hover:border-[var(--brand)] flex items-center justify-center shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-slate-800">{t.titre}</span>
+                      <button onClick={() => cycleImportance(t.id)} title="Cliquer pour changer l'importance">
+                        <Badge className={style.badge}>{t.importance}</Badge>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <UrgencyDot date={t.deadline} />
+                      <span className="text-xs text-slate-500">Échéance : {fmtDate(t.deadline)}</span>
+                    </div>
+                    <button onClick={() => setOpenComments(openComments === t.id ? null : t.id)}
+                      className="text-xs text-slate-400 hover:text-[var(--brand)] flex items-center gap-1 mt-2">
+                      <MessageSquare size={12} /> {(t.commentaires || []).length > 0 ? `${t.commentaires.length} commentaire${t.commentaires.length > 1 ? "s" : ""}` : "Ajouter un commentaire"}
+                    </button>
+                    {openComments === t.id && <CommentsPanel task={t} onAdd={(txt) => addComment(t.id, txt)} onRemove={(cid) => removeComment(t.id, cid)} />}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {showAdd && <AddTaskModal onClose={() => setShowAdd(false)} onSave={addTask} />}
+        {showDone && (
+          <Modal title="Tâches terminées" onClose={() => setShowDone(false)}>
+            <p className="text-xs text-slate-500 mb-3">Supprimées automatiquement 30 jours après leur clôture.</p>
+            {done.length === 0 ? <EmptyState icon={Archive} title="Aucune tâche terminée" /> : (
+              <ul className="space-y-2">
+                {done.map((t) => (
+                  <li key={t.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-3 py-2">
+                    <div>
+                      <p className="text-sm text-slate-700 line-through decoration-slate-400">{t.titre}</p>
+                      <p className="text-xs text-slate-400">Terminée le {fmtDate(t.dateCompletion)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => toggleFait(t.id)} className="text-xs text-[var(--brand)] hover:underline">Réactiver</button>
+                      <button onClick={() => removeDone(t.id)} className="text-slate-400 hover:text-red-600 p-1"><X size={14} /></button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Modal>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CommentsPanel({ task, onAdd, onRemove }) {
+  const [text, setText] = useState("");
+  const comments = task.commentaires || [];
+  function submit() { if (text.trim()) { onAdd(text); setText(""); } }
+  return (
+    <div className="mt-2 border-t border-slate-100 pt-2">
+      <div className="flex gap-2 mb-2">
+        <input className={inputCls} placeholder="Nouveau commentaire…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <button onClick={submit} className={`px-3 rounded-lg shrink-0 ${primaryBtn}`}><Plus size={14} /></button>
+      </div>
+      {comments.length === 0 ? (
+        <p className="text-xs text-slate-400">Aucun commentaire pour l'instant.</p>
+      ) : (
+        <ul className="space-y-2">
+          {comments.map((c) => (
+            <li key={c.id} className="flex items-start justify-between gap-2 bg-slate-50 rounded-lg px-2.5 py-1.5">
+              <div>
+                <p className="text-xs text-slate-700">{c.texte}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">{fmtDateTimeLong(c.date)}</p>
+              </div>
+              <button onClick={() => onRemove(c.id)} className="text-slate-300 hover:text-red-600 shrink-0"><X size={12} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function AddTaskModal({ onClose, onSave }) {
+  const [titre, setTitre] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [importance, setImportance] = useState("Moyenne");
+  const [commentaire, setCommentaire] = useState("");
+  const [error, setError] = useState("");
+
+  function submit() {
+    if (!titre.trim() || !deadline) { setError("Titre et échéance sont obligatoires."); return; }
+    onSave({ titre: titre.trim(), deadline, importance, commentaire });
+  }
+
+  return (
+    <Modal title="Nouvelle tâche" onClose={onClose}>
+      <Field label="Titre"><input className={inputCls} value={titre} onChange={(e) => setTitre(e.target.value)} placeholder="Ex. Relancer client X pour justificatifs" /></Field>
+      <Field label="Échéance"><input type="date" className={inputCls} value={deadline} onChange={(e) => setDeadline(e.target.value)} /></Field>
+      <Field label="Importance">
+        <div className="flex gap-2">
+          {IMPORTANCES.map((imp) => (
+            <button key={imp} onClick={() => setImportance(imp)}
+              className={`flex-1 text-sm px-3 py-2 rounded-lg border ${importance === imp ? IMPORTANCE_STYLE[imp].badge + " font-medium" : "border-slate-300 text-slate-500"}`}>
+              {imp}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Commentaire (facultatif)"><textarea className={inputCls} rows={2} value={commentaire} onChange={(e) => setCommentaire(e.target.value)} /></Field>
+      {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
+      <button onClick={submit} className={`w-full text-sm font-medium py-2.5 rounded-lg mt-2 ${primaryBtn}`}>Ajouter la tâche</button>
+    </Modal>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+
+<div id="boot-error" style="display:none; font-family: monospace; white-space: pre-wrap; padding: 24px; color: #b91c1c; background: #fef2f2;"></div>
+<script>
+  (function () {
+    try {
+      var src = document.getElementById("app-source").textContent;
+      var result = Babel.transform(src, { presets: [["react", { runtime: "classic" }]] });
+      var script = document.createElement("script");
+      script.text = result.code;
+      document.body.appendChild(script);
+    } catch (err) {
+      var box = document.getElementById("boot-error");
+      box.style.display = "block";
+      box.textContent = "Erreur au chargement de l'application :\n\n" + (err && err.stack ? err.stack : err);
+      console.error(err);
+    }
+  })();
+</script>
+</body>
+</html>
